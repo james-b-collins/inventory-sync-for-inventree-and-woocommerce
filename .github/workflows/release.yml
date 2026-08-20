@@ -1,0 +1,27 @@
+
+
+name: Release
+
+# Triggered by a push to a tag that starts with "v".
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+# runs the build-release job on the latest version of Ubuntu
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build plugin zip
+        run: bash bin/build-release.sh "${GITHUB_REF_NAME}"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/*.zip --generate-notes

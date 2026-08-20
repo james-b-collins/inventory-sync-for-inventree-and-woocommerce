@@ -1,0 +1,100 @@
+# Creates a local wordpress + WooCommerce dev stack
+# See README.md for usage instructions.
+services:
+  db:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: ${DB_NAME:-wordpress}
+      MARIADB_USER: ${DB_USER:-wordpress}
+      MARIADB_PASSWORD: ${DB_PASSWORD:-wordpress}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root}
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./docker/test-db-init.sql:/docker-entrypoint-initdb.d/10-inventree-test-db.sql:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  wordpress:
+    image: wordpress:php8.2-apache
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${WP_PORT:-8090}:80"
+    environment:
+      WORDPRESS_DB_HOST: db:3306
+      WORDPRESS_DB_NAME: ${DB_NAME:-wordpress}
+      WORDPRESS_DB_USER: ${DB_USER:-wordpress}
+      WORDPRESS_DB_PASSWORD: ${DB_PASSWORD:-wordpress}
+      INVENTREE_URL: ${INVENTREE_URL:-http://host.docker.internal:8000}
+      WORDPRESS_CONFIG_EXTRA: |
+        define('DISABLE_WP_CRON', true);
+        define('WP_DEBUG', true);
+        define('WP_DEBUG_LOG', true);
+        define('WP_DEBUG_DISPLAY', false);
+    extra_hosts:
+      # Allow the WordPress container to reach the InvenTree devcontainer on the host machine.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - wp_data:/var/www/html
+      - ./:/var/www/html/wp-content/plugins/inventory-sync-for-inventree-and-woocommerce
+
+  wpcli:
+    image: wordpress:cli-php8.2
+    # Match the apache image's www-data uid (33)
+    user: "33:33"
+    depends_on:
+      db:
+        condition: service_healthy
+      wordpress:
+        condition: service_started
+    environment:
+      WP_URL: ${WP_URL:-http://localhost:8090}
+      WP_TITLE: ${WP_TITLE:-InvenTree Dev Store}
+      WP_ADMIN_USER: ${WP_ADMIN_USER:-admin}
+      WP_ADMIN_PASSWORD: ${WP_ADMIN_PASSWORD:-admin}
+      WP_ADMIN_EMAIL: ${WP_ADMIN_EMAIL:-admin@example.com}
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_NAME: ${DB_NAME:-wordpress}
+      WORDPRESS_DB_USER: ${DB_USER:-wordpress}
+      WORDPRESS_DB_PASSWORD: ${DB_PASSWORD:-wordpress}
+      WP_CLI_CACHE_DIR: /tmp/wp-cli-cache
+      INVENTREE_URL: ${INVENTREE_URL:-http://host.docker.internal:8000}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - wp_data:/var/www/html
+      - ./:/var/www/html/wp-content/plugins/inventory-sync-for-inventree-and-woocommerce
+      - ./docker/wp-setup.sh:/usr/local/bin/wp-setup.sh:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/wp-setup.sh"]
+
+# Runs the WordPress cron jobs in a separate container, so they can run without traffic
+  wp-cron:
+    image: wordpress:cli-php8.2
+    user: "33:33"
+    restart: unless-stopped
+    environment:
+      WP_CLI_CACHE_DIR: /tmp/wp-cli-cache
+      INVENTREE_URL: ${INVENTREE_URL:-http://host.docker.internal:8000}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      wordpress:
+        condition: service_started
+    volumes:
+      - wp_data:/var/www/html
+      - ./:/var/www/html/wp-content/plugins/inventory-sync-for-inventree-and-woocommerce
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "until wp core is-installed --path=/var/www/html >/dev/null 2>&1; do sleep 5; done;
+       echo 'wp-cron: running due events every 60s';
+       while true; do wp cron event run --due-now --path=/var/www/html >/dev/null 2>&1 || true; sleep 60; done"
+
+volumes:
+  db_data:
+  wp_data:

@@ -1,0 +1,29 @@
+name: Tests
+
+# Triggered by a push to the main branch, a pull request, or a trigger.
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+
+      - name: Install dev dependencies
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Lint
+        run: find src tests -name '*.php' -print0 | xargs -0 -n1 php -l > /dev/null
+
+        #runs all unit tests. Integration tests require a live InvenTree and WooCommerce instance, so they are not run in this workflow.
+      - name: Unit tests
+        run: php vendor/bin/phpunit

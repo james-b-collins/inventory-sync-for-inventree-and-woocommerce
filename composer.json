@@ -1,0 +1,28 @@
+{
+    "name": "inventree/sync-for-woocommerce",
+    "description": "Mirror InvenTree catalogue and stock into WooCommerce, and record web orders back as InvenTree sales orders.",
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
+    "require": {
+        "php": ">=8.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.6",
+        "brain/monkey": "^2.6",
+        "wp-phpunit/wp-phpunit": "^7.0",
+        "yoast/phpunit-polyfills": "^2.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "InvenTreeSync\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "InvenTreeSync\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit"
+    }
+}
