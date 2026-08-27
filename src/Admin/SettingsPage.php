@@ -22,6 +22,7 @@ final class SettingsPage {
 		private Settings $settings,
 		private AddonMappingPage $addons,
 		private ImportPage $import,
+		private MappingPage $mapping,
 		private LogPage $log,
 	) {}
 
@@ -363,6 +364,7 @@ final class SettingsPage {
 		}
 		if ( Capabilities::can_use_catalogue_tools() ) {
 			$tabs['import'] = __( 'Import products', 'inventory-sync-for-inventree-and-woocommerce' );
+			$tabs['mapping'] = __( 'Mapping', 'inventory-sync-for-inventree-and-woocommerce' );
 
 			// Only show the add-ons tab if the user can manage the plugin and add-ons are enabled
 			if ( $this->settings->addons_enabled() ) {
@@ -411,7 +413,9 @@ final class SettingsPage {
 				<?php endforeach; ?>
 			</h2>
 
-			<?php if ( 'import' === $active ) : ?>
+			<?php if ( 'mapping' === $active ) : ?>
+				<?php $this->mapping->render_content( $base . '&tab=mapping' ); ?>
+			<?php elseif ( 'import' === $active ) : ?>
 				<?php $this->import->render_content( $base . '&tab=import' ); ?>
 			<?php elseif ( 'addons' === $active ) : ?>
 				<?php $this->addons->render_content( $base . '&tab=addons' ); ?>

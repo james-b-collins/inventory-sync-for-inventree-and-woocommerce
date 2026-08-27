@@ -29,6 +29,7 @@ $inventree_sync_meta_keys = [
 	'_inventree_part_id',
 	'_inventree_qty',
 	'_inventree_pending',
+	'_inventree_part_label',
 ];
 
 // loop through the meta keys and delete them

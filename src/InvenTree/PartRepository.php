@@ -16,6 +16,33 @@ final class PartRepository {
 
 	public function __construct(private Client $client) {}
 
+	// Search parts by name, IPN or keyword
+	public function search_parts( string $query, int $limit = 20 ): array {
+		$response = $this->client->get(
+			'part/',
+			[
+				'search' => $query,
+				'limit'  => $limit,
+			]
+		);
+
+		$rows  = $response['results'] ?? $response;
+		$parts = [];
+
+		foreach ( $rows as $row ) {
+			$parts[] = [
+				'pk'       => (int) ( $row['pk'] ?? 0 ),
+				'name'     => (string) ( $row['full_name'] ?? $row['name'] ?? '' ),
+				'ipn'      => (string) ( $row['IPN'] ?? '' ),
+				'in_stock' => (float) ( $row['in_stock'] ?? 0 ),
+				'active'   => ! empty( $row['active'] ),
+				'salable'  => ! empty( $row['salable'] ),
+			];
+		}
+
+		return $parts;
+	}
+
 	// Fetch one page of active, salable parts.
 	public function fetch_salable_page( int $limit, int $offset ): array {
 		$response = $this->client->get(

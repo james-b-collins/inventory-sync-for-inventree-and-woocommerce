@@ -31,7 +31,7 @@ is the single source of truth for inventory with WooCommerce acting solely as th
 
 ## Configuration
 
-Go to **Settings > Inventory Sync**. There are four tabs:
+Go to **Settings > Inventory Sync**. There are five tabs:
 
 - **Settings** - InvenTree URL and API token, the two feature toggles below, the
   order statuses that commit stock (default `processing, completed`), the sync
@@ -39,8 +39,16 @@ Go to **Settings > Inventory Sync**. There are four tabs:
   how many log records to keep. Every field has a description on the page. The
   **Activate** / **Deactivate** button sits at the bottom beside Save settings.
 - **Import products** - bring InvenTree parts into WooCommerce.
+- **Mapping** - link products to InvenTree parts by hand, for parts that cannot be matched automatically.
 - **Add-on mapping** - only shown when the Product Add-Ons integration is switched on.
 - **Log** - the plugin's recent actions.
+
+### How products are matched
+
+Each WooCommerce product stores the id of the InvenTree part it belongs to, and that stored link is what the sync uses. It gets set in one of three ways:
+- **Automatically**, the first time a part is seen whose IPN equals a product's SKU.
+- **By hand**, on the **Mapping** tab WooCommerce products may be manually linked with InvenTree parts by using the InvenTree search feature.
+- **In bulk**, via the WP-CLI with `wp inventree map --file=mapping.csv`, which takes a `sku,part_id` file.
 
 ### Roles visibility
 
@@ -49,6 +57,7 @@ Go to **Settings > Inventory Sync**. There are four tabs:
 | Settings, Activate / Deactivate | yes | no |
 | Log | yes | no |
 | Import products | yes | yes |
+| Mapping | yes | yes |
 | Add-on mapping | yes | yes |
 
 ### WP-CLI
@@ -58,6 +67,7 @@ wp inventree ping             # check connectivity and auth
 wp inventree fields           # inspect a sample part's fields
 wp inventree sync             # sync salable parts into WooCommerce
 wp inventree sync --dry-run   # read-only: report what the sync would compute
+wp inventree map --file=m.csv # link products to parts in bulk from a sku,part_id file
 wp inventree schedule         # schedule the recurring background sync
 wp inventree unschedule       # cancel it
 ```

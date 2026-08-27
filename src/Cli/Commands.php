@@ -7,6 +7,9 @@ namespace InvenTreeSync\Cli;
 use InvenTreeSync\InvenTree\ClientException;
 use InvenTreeSync\InvenTree\PartRepository;
 use InvenTreeSync\Plugin;
+use InvenTreeSync\Catalogue\IdentityResolver;
+use InvenTreeSync\Catalogue\ProductLookup;
+use InvenTreeSync\Support\Meta;
 use WP_CLI;
 
 use function WP_CLI\Utils\format_items;
@@ -196,7 +199,183 @@ final class Commands {
 		WP_CLI::success( 'Recurring sync unscheduled.' );
 	}
 
-	// Perform a dry run of the sync, reporting what would be done without writing anything
+	// Map WooCommerce products to InvenTree parts manually.
+	public function map( array $args, array $assoc_args ): void {
+		$dry_run = (bool) get_flag_value( $assoc_args, 'dry-run', false );
+		$remove  = (bool) get_flag_value( $assoc_args, 'remove', false );
+		$file    = get_flag_value( $assoc_args, 'file' );
+		$sku     = get_flag_value( $assoc_args, 'sku' );
+		$part    = get_flag_value( $assoc_args, 'part' );
+
+		// Build the list of pairs
+		$pairs = [];
+		if ( null !== $file ) {
+			$pairs = $this->read_mapping_file( (string) $file );
+		} elseif ( null !== $sku ) {
+			$pairs[] = [ 'sku' => (string) $sku, 'part_id' => (int) $part ];
+		} else {
+			WP_CLI::error( 'Give either --file=<path> or --sku=<sku>.' );
+		}
+
+		if ( empty( $pairs ) ) {
+			WP_CLI::error( 'Nothing to do.' );
+		}
+
+		// if the part is being removed we don't need the repository
+		$repo = null;
+		if ( ! $remove ) {
+			$repo = Plugin::instance()->make_part_repository();
+			if ( null === $repo ) {
+				$this->not_configured();
+			}
+		}
+
+		$done    = 0;
+		$failed  = 0;
+		$skipped = 0;
+
+		// Iterate over each pair and attempt to map or unmap it
+		foreach ( $pairs as $pair ) {
+			$row_sku    = trim( $pair['sku'] );
+			$part_id    = (int) $pair['part_id'];
+			$product_id = (int) wc_get_product_id_by_sku( $row_sku );
+
+			if ( $product_id <= 0 ) {
+				WP_CLI::warning( sprintf( '%-20s no WooCommerce product with that SKU', $row_sku ) );
+				++$failed;
+				continue;
+			}
+
+			if ( $remove ) {
+				if ( ! $dry_run ) {
+					delete_post_meta( $product_id, Meta::PART_ID );
+				}
+				WP_CLI::log( sprintf( '  unlink %-20s product #%d', $row_sku, $product_id ) );
+				++$done;
+				continue;
+			}
+
+			if ( $part_id <= 0 ) {
+				WP_CLI::warning( sprintf( '%-20s no part id given', $row_sku ) );
+				++$failed;
+				continue;
+			}
+
+			// A variable parent holds no stock of its own, so it can never be managed
+			$product = wc_get_product( $product_id );
+			if ( ! $product || ! ProductLookup::is_managed_type( $product ) ) {
+				WP_CLI::warning( sprintf( '%-20s product #%d is not a simple product or variation', $row_sku, $product_id ) );
+				++$failed;
+				continue;
+			}
+
+			// The part has to exist, or the sync would never find anything for this link
+			try {
+				$part_row = $repo->fetch_part( $part_id );
+			} catch ( ClientException $exception ) {
+				WP_CLI::error( 'InvenTree request failed: ' . $exception->getMessage() );
+			}
+			if ( null === $part_row ) {
+				WP_CLI::warning( sprintf( '%-20s InvenTree part %d not found', $row_sku, $part_id ) );
+				++$failed;
+				continue;
+			}
+
+			// Refuse to point two products at the same part
+			$claimed_by = ProductLookup::find_by_part_id( $part_id );
+			if ( $claimed_by > 0 && $claimed_by !== $product_id ) {
+				WP_CLI::warning( sprintf( '%-20s part %d is already linked to product #%d', $row_sku, $part_id, $claimed_by ) );
+				++$failed;
+				continue;
+			}
+
+			if ( $claimed_by === $product_id ) {
+				WP_CLI::log( sprintf( '  same   %-20s already linked to part %d', $row_sku, $part_id ) );
+				++$skipped;
+				continue;
+			}
+
+			// notify if the part is not both active and salable
+			if ( empty( $part_row['active'] ) || empty( $part_row['salable'] ) ) {
+				WP_CLI::warning( sprintf( '%-20s part %d is not both active and salable, so it will not sync yet', $row_sku, $part_id ) );
+			}
+
+			// Link the WooCommerce product to the InvenTree part unless this is a dry run
+			if ( ! $dry_run ) {
+				update_post_meta( $product_id, Meta::PART_ID, $part_id );
+				( new IdentityResolver() )->clear_pre_adoption_reduction( $product_id );
+			}
+
+			WP_CLI::log( sprintf( '  link   %-20s product #%-6d -> part %d', $row_sku, $product_id, $part_id ) );
+			++$done;
+		}
+
+		if ( $dry_run ) {
+			WP_CLI::success( sprintf( 'Dry run: %d would change, %d already correct, %d problem(s). Nothing was written.', $done, $skipped, $failed ) );
+			return;
+		}
+		WP_CLI::success( sprintf( '%d changed, %d already correct, %d problem(s).', $done, $skipped, $failed ) );
+	}
+
+	// Read sku/part_id pairs from a CSV file
+	private function read_mapping_file( string $file ): array {
+		if ( ! is_readable( $file ) ) {
+			WP_CLI::error( sprintf( 'Cannot read file: %s', $file ) );
+		}
+		$handle = fopen( $file, 'r' );
+		$header = fgetcsv( $handle );
+		if ( ! is_array( $header ) ) {
+			WP_CLI::error( 'The file has no header row.' );
+		}
+
+		// Handle potential byte order mark in the first header cell
+		$header[0] = preg_replace( '/^\xEF\xBB\xBF/', '', (string) $header[0] );
+
+		$titles = [];
+		foreach ( $header as $index => $title ) {
+			$titles[ $index ] = strtolower( trim( (string) $title ) );
+		}
+
+		$find = static function ( array $titles, array $aliases ) {
+			foreach ( $aliases as $alias ) {
+				$index = array_search( $alias, $titles, true );
+				if ( false !== $index ) {
+					return $index;
+				}
+			}
+			return null;
+		};
+
+		$sku_column  = $find( $titles, [ 'sku', 'product sku' ] );
+		$part_column = $find( $titles, [ 'part_id', 'part id', 'part', 'id', 'inventree id' ] );
+
+		if ( null === $sku_column ) {
+			WP_CLI::error( sprintf( 'No SKU column found. Header was: %s', implode( ', ', $header ) ) );
+		}
+		if ( null === $part_column ) {
+			WP_CLI::error( sprintf( 'No part id column found. Header was: %s', implode( ', ', $header ) ) );
+		}
+
+		$pairs = [];
+		while ( false !== ( $row = fgetcsv( $handle ) ) ) {
+			if ( ! is_array( $row ) || [ null ] === $row ) {
+				continue;
+			}
+			$row_sku = trim( (string) ( $row[ $sku_column ] ?? '' ) );
+			if ( '' === $row_sku ) {
+				continue;
+			}
+			$pairs[] = [
+				'sku'     => $row_sku,
+				'part_id' => (int) ( $row[ $part_column ] ?? 0 ),
+			];
+		}
+		fclose( $handle );
+
+		return $pairs;
+	}
+
+	// Perform a dry run of the sync, reporting what would be done without writing anything to the database.
 	private function dry_run( array $assoc_args ): void {
 		$repo = Plugin::instance()->make_part_repository();
 		if ( null === $repo ) {

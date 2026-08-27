@@ -10,6 +10,7 @@ use InvenTreeSync\Addons\AddonMap;
 use InvenTreeSync\Admin\AddonMappingPage;
 use InvenTreeSync\Admin\ImportPage;
 use InvenTreeSync\Admin\LogPage;
+use InvenTreeSync\Admin\MappingPage;
 use InvenTreeSync\Admin\Settings;
 use InvenTreeSync\Admin\SettingsPage;
 use InvenTreeSync\Support\LogStore;
@@ -44,6 +45,7 @@ final class SettingsPageSanitizeTest extends TestCase {
 			new Settings(),
 			new AddonMappingPage( new AddonMap() ),
 			new ImportPage( new Settings(), static fn () => null, static fn () => null ),
+			new MappingPage( new Settings(), static fn () => null ),
 			new LogPage( new LogStore( new Settings() ) )
 		);
 	}

@@ -10,6 +10,7 @@ use InvenTreeSync\Admin\AddonMappingPage;
 use InvenTreeSync\Admin\HealthNotice;
 use InvenTreeSync\Admin\ImportPage;
 use InvenTreeSync\Admin\LogPage;
+use InvenTreeSync\Admin\MappingPage;
 use InvenTreeSync\Admin\Settings;
 use InvenTreeSync\Admin\SettingsPage;
 use InvenTreeSync\Catalogue\IdentityResolver;
@@ -104,7 +105,12 @@ final class Plugin {
 			fn (): ?ProductImporter => $this->make_product_importer( $writer, $pending ),
 		);
 		$import_page->register();
-		( new SettingsPage( $this->settings, $addons, $import_page, $log_page ) )->register();
+		$mapping_page = new MappingPage(
+			$this->settings,
+			fn (): ?PartRepository => $this->make_part_repository(),
+		);
+		$mapping_page->register();
+		( new SettingsPage( $this->settings, $addons, $import_page, $mapping_page, $log_page ) )->register();
 
 		$mirror_inventory    = $this->settings->mirror_inventory();
 		$create_sales_orders = $this->settings->create_sales_orders();
