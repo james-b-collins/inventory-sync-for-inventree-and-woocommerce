@@ -34,33 +34,56 @@ final class AllocationPoller {
 			return;
 		}
 
-		$orders = wc_get_orders(
-			[
-				'status' => $this->settings->committing_statuses(),
-				'limit'  => -1,
-			]
-		);
-
-		// Iterate over all orders that are in a committing status.
-		foreach ( $orders as $order ) {
-			if ( 'yes' === (string) $order->get_meta( Meta::ORDER_RELEASED ) ) {
-				continue;
-			}
-
-			$sales_order_id = (int) $order->get_meta( Meta::ORDER_SALES_ORDER_ID );
-			if ( $sales_order_id <= 0 ) {
-				continue; // Not pushed upstream yet.
-			}
-
-			try {
-				$upstream_by_part = $this->upstream_quantities( $sales_order_repository, $sales_order_id );
-			} catch ( \Throwable $exception ) {
-				$this->logger->warning( 'Poll: could not read sales order.', [ 'so' => $sales_order_id, 'error' => $exception->getMessage() ] );
-				continue;
-			}
-
-			$this->release_matched( $order, $upstream_by_part );
+		// Only orders that still hold stock are worth polling. Listing every order in a
+		// committing status instead grows with the order history, and on a real store it
+		// eventually cannot finish inside the time Action Scheduler allows.
+		$order_ids = [];
+		foreach ( $this->store->all_held() as $reservation ) {
+			$order_ids[ (int) $reservation->order_id ] = true;
 		}
+
+		foreach ( array_keys( $order_ids ) as $order_id ) {
+			// One bad order must not abort the run. A recurring action that fails is not
+			// rescheduled, so throwing here would stop every future release.
+			try {
+				$this->poll_order( $sales_order_repository, (int) $order_id );
+			} catch ( \Throwable $exception ) {
+				$this->logger->error(
+					'Poll failed for an order.',
+					[ 'order' => $order_id, 'error' => $exception->getMessage() ]
+				);
+			}
+		}
+	}
+
+	// Release whatever the upstream sales order now covers for one order.
+	private function poll_order( SalesOrderRepository $sales_order_repository, int $order_id ): void {
+		$order = wc_get_order( $order_id );
+		if ( ! $order ) {
+			return;
+		}
+
+		if ( ! in_array( $order->get_status(), $this->settings->committing_statuses(), true ) ) {
+			return;
+		}
+
+		if ( 'yes' === (string) $order->get_meta( Meta::ORDER_RELEASED ) ) {
+			return;
+		}
+
+		$sales_order_id = (int) $order->get_meta( Meta::ORDER_SALES_ORDER_ID );
+		if ( $sales_order_id <= 0 ) {
+			return; // Not pushed upstream yet.
+		}
+
+		try {
+			$upstream_by_part = $this->upstream_quantities( $sales_order_repository, $sales_order_id );
+		} catch ( \Throwable $exception ) {
+			$this->logger->warning( 'Poll: could not read sales order.', [ 'so' => $sales_order_id, 'error' => $exception->getMessage() ] );
+			return;
+		}
+
+		$this->release_matched( $order, $upstream_by_part );
 	}
 
 	// Release any reservations that are fully covered by upstream sales order lines.
