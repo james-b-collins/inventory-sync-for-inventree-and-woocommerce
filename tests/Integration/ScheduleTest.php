@@ -13,6 +13,7 @@ final class ScheduleTest extends IntegrationTestCase {
 	protected function setUp(): void {
 		parent::setUp();
 		as_unschedule_all_actions( '', [], Scheduler::GROUP );
+		delete_transient( 'inventree_sync_schedule_checked' );
 	}
 
 	// tears down the test environment, and unschedules any existing scheduled actions for the sync and reconcile tasks.
@@ -119,5 +120,48 @@ final class ScheduleTest extends IntegrationTestCase {
 		$this->scheduler()->schedule_recurring( 5, true, true );
 
 		$this->assertSame( 60, $this->interval_of( Scheduler::SYNC_START ) );
+	}
+
+	// tests that heal correctly restores a recurring action that stopped
+	public function test_healing_reschedules_a_series_that_stopped(): void {
+		$this->scheduler()->schedule_recurring( 900, true, true );
+		as_unschedule_all_actions( Scheduler::POLL_ALLOCATIONS, [], Scheduler::GROUP );
+		$this->assertSame( 0, $this->count_of( Scheduler::POLL_ALLOCATIONS ) );
+
+		$this->scheduler()->heal( 900, true, true );
+
+		$this->assertSame( 1, $this->count_of( Scheduler::POLL_ALLOCATIONS ), 'the dead series must come back' );
+		$this->assertSame( 300, $this->interval_of( Scheduler::POLL_ALLOCATIONS ) );
+	}
+
+	// tests that healing leaves a healthy schedule alone.
+	public function test_healing_leaves_a_healthy_schedule_alone(): void {
+		$this->scheduler()->schedule_recurring( 900, true, true );
+		$first_run = as_next_scheduled_action( Scheduler::SYNC_START, [], Scheduler::GROUP );
+
+		delete_transient( 'inventree_sync_schedule_checked' );
+		$this->scheduler()->heal( 900, true, true );
+
+		$this->assertSame( $first_run, as_next_scheduled_action( Scheduler::SYNC_START, [], Scheduler::GROUP ) );
+		$this->assertSame( 1, $this->count_of( Scheduler::SYNC_START ) );
+		$this->assertSame( 1, $this->count_of( Scheduler::POLL_ALLOCATIONS ) );
+	}
+
+	// tests that the check is rate limited, so it does not query the queue on every request.
+	public function test_healing_is_rate_limited(): void {
+		$this->scheduler()->heal( 900, true, true );
+		as_unschedule_all_actions( Scheduler::POLL_ALLOCATIONS, [], Scheduler::GROUP );
+
+		$this->scheduler()->heal( 900, true, true );
+
+		$this->assertSame( 0, $this->count_of( Scheduler::POLL_ALLOCATIONS ), 'the second check must be skipped' );
+	}
+
+	// tests that healing does not schedule anything the current settings have turned off.
+	public function test_healing_respects_the_settings(): void {
+		$this->scheduler()->heal( 900, false, true );
+
+		$this->assertSame( 0, $this->count_of( Scheduler::SYNC_START ) );
+		$this->assertSame( 1, $this->count_of( Scheduler::POLL_ALLOCATIONS ) );
 	}
 }

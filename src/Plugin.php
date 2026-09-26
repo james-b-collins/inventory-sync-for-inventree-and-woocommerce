@@ -145,6 +145,23 @@ final class Plugin {
 		$this->scheduler = new Scheduler( $this->sync, $pusher, $poller, $reconciler );
 		$this->scheduler->register_handlers( $mirror_inventory, $create_sales_orders );
 
+		// Heal the recurring schedule for the plugin's actions.
+		add_action(
+			'init',
+			function () use ( $mirror_inventory, $create_sales_orders ): void {
+				if ( null === $this->scheduler ) {
+					return;
+				}
+				$this->scheduler->heal(
+					$this->settings->sync_interval_seconds(),
+					$mirror_inventory,
+					$create_sales_orders,
+					$this->logger
+				);
+			},
+			20
+		);
+
 		// Register hooks to respond to settings changes, ensuring that the plugin's runtime state matches the current configuration
 		add_action(
 			'update_option_' . Settings::OPTION,

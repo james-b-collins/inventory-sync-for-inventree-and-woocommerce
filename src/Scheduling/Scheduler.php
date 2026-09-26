@@ -7,6 +7,7 @@ namespace InvenTreeSync\Scheduling;
 use InvenTreeSync\Push\AllocationPoller;
 use InvenTreeSync\Push\PendingReconciler;
 use InvenTreeSync\Push\SalesOrderPusher;
+use InvenTreeSync\Support\Logger;
 use InvenTreeSync\Sync\SyncRunner;
 
 // Exit if accessed directly.
@@ -26,6 +27,8 @@ final class Scheduler {
 	private const POLL_INTERVAL = 5 * MINUTE_IN_SECONDS;	// Poll for upstream releases every 5 minutes.
 	private const RECONCILE_INTERVAL = HOUR_IN_SECONDS;		// Reconcile pending stock every hour.
 	private const INTERVAL_UNKNOWN = -1;					// Unknown interval means the action is scheduled but the recurrence cannot be read.
+	private const HEAL_CHECK_INTERVAL = 5 * MINUTE_IN_SECONDS;	// Time interval between checks for healing the schedule.
+	private const HEAL_TRANSIENT = 'inventree_sync_schedule_checked';
 
 	public function __construct(
 		private SyncRunner $sync,
@@ -73,6 +76,51 @@ final class Scheduler {
 			$this->ensure_unscheduled( self::POLL_ALLOCATIONS );
 			$this->ensure_unscheduled( self::RECONCILE_PENDING );
 		}
+	}
+
+	// Heal the recurring schedule if any actions have stopped.	
+	// This method checks if any of the expected recurring actions are missing and reschedules them if necessary.
+	public function heal( int $interval_seconds, bool $mirror_inventory, bool $create_sales_orders, ?Logger $logger = null ): void {
+		if ( ! function_exists( 'as_schedule_recurring_action' ) ) {
+			return;
+		}
+
+		if ( false !== get_transient( self::HEAL_TRANSIENT ) ) {
+			return;
+		}
+		set_transient( self::HEAL_TRANSIENT, 1, self::HEAL_CHECK_INTERVAL );
+
+		$missing = $this->missing_hooks( $mirror_inventory, $create_sales_orders );
+
+		$this->schedule_recurring( $interval_seconds, $mirror_inventory, $create_sales_orders );
+
+		if ( [] !== $missing && null !== $logger ) {
+			$logger->warning(
+				'Rescheduled recurring actions that had stopped.',
+				[ 'hooks' => implode( ', ', $missing ) ]
+			);
+		}
+	}
+
+	// returns an array of hook names that are expected to be scheduled but are currently missing.
+	private function missing_hooks( bool $mirror_inventory, bool $create_sales_orders ): array {
+		$expected = [];
+		if ( $mirror_inventory ) {
+			$expected[] = self::SYNC_START;
+		}
+		if ( $create_sales_orders ) {
+			$expected[] = self::POLL_ALLOCATIONS;
+			$expected[] = self::RECONCILE_PENDING;
+		}
+
+		$missing = [];
+		foreach ( $expected as $hook ) {
+			if ( false === as_next_scheduled_action( $hook, [], self::GROUP ) ) {
+				$missing[] = $hook;
+			}
+		}
+
+		return $missing;
 	}
 
 	// Ensure that a hook is scheduled at the given interval, unscheduling any existing schedule if necessary.

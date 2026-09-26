@@ -110,4 +110,58 @@ final class PushPollTest extends IntegrationTestCase {
 		$this->assertSame( 25, $this->stock( $product->get_id() ) );
 		$this->assertSame( 'yes', (string) wc_get_order( $order->get_id() )->get_meta( Meta::ORDER_RELEASED ) );
 	}
+
+	// test that the poll only reaches orders that still hold stock.
+	public function test_poll_ignores_orders_that_hold_nothing(): void {
+		$product = $this->make_managed_product( 'PP-2', 602, 25 );
+		$order   = $this->make_order( [ [ $product, 2 ] ] );
+
+		$order->update_status( 'processing' );
+
+		$store        = new ReservationStore();
+		$logger       = new Logger();
+		$repo         = new SalesOrderRepository( new Client( 'http://fake', 'token' ) );
+		$repo_factory = static fn (): SalesOrderRepository => $repo;
+		$releases     = new ReleaseService( new Settings(), $store, new PendingLedger( $store ), new ProductWriter(), $repo_factory, $logger );
+
+		// Remove all reservations for this order to simulate it holding no stock.
+		foreach ( $store->for_order( $order->get_id() ) as $reservation ) {
+			$store->remove( (int) $reservation->id );
+		}
+		$order->update_meta_data( Meta::ORDER_SALES_ORDER_ID, 500 );
+		$order->save();
+
+		// Ensure that the order initially has no reservations.
+		$this->assertSame( [], $store->for_order( $order->get_id() ), 'the order must hold nothing for this test to mean anything' );
+
+		( new AllocationPoller( $store, $repo_factory, new Settings(), $releases, $logger ) )->poll();
+
+		// Assert that the order holding no stock is not visited.
+		$this->assertSame(
+			'',
+			(string) wc_get_order( $order->get_id() )->get_meta( Meta::ORDER_RELEASED ),
+			'an order holding nothing must not be visited at all'
+		);
+	}
+
+	// test that a reservation left behind by a deleted order cannot stop the rest of the run.
+	public function test_poll_survives_a_reservation_for_a_missing_order(): void {
+		$store = new ReservationStore();
+		$store->add( 999999, 0, 0, 603, 'test', 'missing', 4 );
+
+		$product = $this->make_managed_product( 'PP-3', 604, 25 );
+		$order   = $this->make_order( [ [ $product, 3 ] ] );
+		$order->update_status( 'processing' );
+
+		$logger       = new Logger();
+		$repo         = new SalesOrderRepository( new Client( 'http://fake', 'token' ) );
+		$repo_factory = static fn (): SalesOrderRepository => $repo;
+
+		( new SalesOrderPusher( $store, $repo_factory, $logger ) )->push( $order->get_id() );
+
+		$releases = new ReleaseService( new Settings(), $store, new PendingLedger( $store ), new ProductWriter(), $repo_factory, $logger );
+		( new AllocationPoller( $store, $repo_factory, new Settings(), $releases, $logger ) )->poll();
+
+		$this->assertSame( 'yes', (string) wc_get_order( $order->get_id() )->get_meta( Meta::ORDER_RELEASED ), 'the good order must still release' );
+	}
 }
