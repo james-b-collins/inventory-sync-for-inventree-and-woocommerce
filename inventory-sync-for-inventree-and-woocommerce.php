@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Inventory Sync for InvenTree and WooCommerce
  * Description:       Mirrors stock from an InvenTree instance into WooCommerce, and records web orders back into InvenTree as sales orders. InvenTree is the single source of truth for inventory. Not affiliated with the InvenTree project or with Automattic.
- * Version:           0.2.1
+ * Version:           0.2.2
  * Requires PHP:      8.0
  * Requires at least: 6.0
  * Requires Plugins:  woocommerce
@@ -21,7 +21,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants for version, file path, and directory.
-define( 'INVENTREE_SYNC_VERSION', '0.2.1' );
+define( 'INVENTREE_SYNC_VERSION', '0.2.2' );
 define( 'INVENTREE_SYNC_FILE', __FILE__ );
 define( 'INVENTREE_SYNC_DIR', plugin_dir_path( __FILE__ ) );
 
