@@ -22,6 +22,11 @@
             "InvenTreeSync\\Tests\\": "tests/"
         }
     },
+    "config": {
+        "platform": {
+            "php": "8.2"
+        }
+    },
     "scripts": {
         "test": "phpunit"
     }
