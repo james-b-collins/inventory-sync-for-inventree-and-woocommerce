@@ -82,7 +82,7 @@ final class AllocationPoller {
 		$this->release_matched( $order, $upstream_by_part );
 	}
 
-	// Release any reservations that are fully covered by upstream sales order lines.
+	// Release held stock as far as the upstream sales order lines account for it.
 	private function release_matched( \WC_Order $order, array $upstream_by_part ): void {
 		$all_released = true;
 
@@ -92,11 +92,23 @@ final class AllocationPoller {
 				continue;
 			}
 
-			// Check if the upstream sales order has enough quantity to cover the held quantity.
-			$upstream_quantity = $upstream_by_part[ (int) $reservation->part_id ] ?? 0;
-			if ( $upstream_quantity >= $held_quantity ) {
-				$this->releases->release_reservation( $reservation, $held_quantity );
-			} else {
+			// Determine how much of this part is available upstream to release against.
+			$part_id           = (int) $reservation->part_id;
+			$upstream_quantity = $upstream_by_part[ $part_id ] ?? 0;
+			if ( $upstream_quantity <= 0 ) {
+				$all_released = false;
+				continue;
+			}
+
+			// Release as much as the budget covers
+			$released = $this->releases->release_reservation(
+				$reservation,
+				(int) min( $held_quantity, $upstream_quantity )
+			);
+
+			$upstream_by_part[ $part_id ] = $upstream_quantity - $released;
+
+			if ( $released < $held_quantity ) {
 				$all_released = false;
 			}
 		}
@@ -111,12 +123,13 @@ final class AllocationPoller {
 	private function upstream_quantities( SalesOrderRepository $sales_order_repository, int $sales_order_id ): array {
 		$totals_by_part = [];
 		foreach ( $sales_order_repository->read_lines( $sales_order_id ) as $line ) {
-			$part_id = $line['part'];
+			$part_id = (int) $line['part'];
 			if ( ! isset( $totals_by_part[ $part_id ] ) ) {
-				$totals_by_part[ $part_id ] = 0;
+				$totals_by_part[ $part_id ] = 0.0;
 			}
-			$totals_by_part[ $part_id ] += $line['quantity'];
+			$totals_by_part[ $part_id ] += (float) $line['quantity'];
 		}
-		return $totals_by_part;
+
+		return array_map( 'intval', $totals_by_part );
 	}
 }

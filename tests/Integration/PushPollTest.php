@@ -170,6 +170,65 @@ final class PushPollTest extends IntegrationTestCase {
 		$this->assertCount( 0, $store->all_held(), 'the new hold must be released too, despite the released flag' );
 	}
 
+	// Get the total quantity still held across every reservation.
+	private function total_held( ReservationStore $store ): int {
+		$total = 0;
+		foreach ( $store->all_held() as $reservation ) {
+			$total += (int) $reservation->held_qty;
+		}
+		return $total;
+	}
+
+	// tests that the upstream quantity is spent as a budget across the reservations for a part
+	public function test_poll_does_not_release_more_than_the_upstream_covers(): void {
+		$product = $this->make_managed_product( 'PP-5', 606, 25 );
+		$order   = $this->make_order( [ [ $product, 1 ] ] );
+		$order->update_status( 'processing' );
+
+		$store        = new ReservationStore();
+		$logger       = new Logger();
+		$repo         = new SalesOrderRepository( new Client( 'http://fake', 'token' ) );
+		$repo_factory = static fn (): SalesOrderRepository => $repo;
+		$releases     = new ReleaseService( new Settings(), $store, new PendingLedger( $store ), new ProductWriter(), $repo_factory, $logger );
+
+		( new SalesOrderPusher( $store, $repo_factory, $logger ) )->push( $order->get_id() );
+		$this->assertCount( 1, $this->pushed_lines );
+		$this->assertSame( 1, (int) $this->pushed_lines[0]['quantity'] );
+
+		$store->add( $order->get_id(), 0, $product->get_id(), 606, 'line', 'second', 1 );
+		$this->assertSame( 2, $this->total_held( $store ) );
+
+		( new AllocationPoller( $store, $repo_factory, new Settings(), $releases, $logger ) )->poll();
+
+		$this->assertSame( 1, $this->total_held( $store ), 'only the one unit upstream covers may be released' );
+	}
+
+	// tests that a reservation is partly released when the upstream only partly covers it
+	public function test_poll_partly_releases_a_reservation_upstream_partly_covers(): void {
+		$product = $this->make_managed_product( 'PP-6', 607, 25 );
+		$order   = $this->make_order( [ [ $product, 1 ] ] );
+		$order->update_status( 'processing' );
+
+		$store        = new ReservationStore();
+		$logger       = new Logger();
+		$repo         = new SalesOrderRepository( new Client( 'http://fake', 'token' ) );
+		$repo_factory = static fn (): SalesOrderRepository => $repo;
+		$releases     = new ReleaseService( new Settings(), $store, new PendingLedger( $store ), new ProductWriter(), $repo_factory, $logger );
+
+		// Upstream accounts for one unit.
+		( new SalesOrderPusher( $store, $repo_factory, $logger ) )->push( $order->get_id() );
+
+		// The single reservation now holds two, so upstream covers half of it.
+		$reservations = $store->for_order( $order->get_id() );
+		$this->assertCount( 1, $reservations );
+		$store->update_quantities( (int) $reservations[0]->id, 2, 2 );
+		$this->assertSame( 2, $this->total_held( $store ) );
+
+		( new AllocationPoller( $store, $repo_factory, new Settings(), $releases, $logger ) )->poll();
+
+		$this->assertSame( 1, $this->total_held( $store ), 'the covered unit is released, the rest stays held' );
+	}
+
 	// test that a reservation left behind by a deleted order cannot stop the rest of the run.
 	public function test_poll_survives_a_reservation_for_a_missing_order(): void {
 		$store = new ReservationStore();
