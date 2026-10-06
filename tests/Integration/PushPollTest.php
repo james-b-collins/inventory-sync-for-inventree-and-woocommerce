@@ -144,6 +144,32 @@ final class PushPollTest extends IntegrationTestCase {
 		);
 	}
 
+	// test that stock committed after an order was already released still gets released.
+	public function test_poll_releases_stock_committed_after_the_order_was_released(): void {
+		$product = $this->make_managed_product( 'PP-4', 605, 25 );
+		$order   = $this->make_order( [ [ $product, 2 ] ] );
+		$order->update_status( 'processing' );
+
+		$store        = new ReservationStore();
+		$logger       = new Logger();
+		$repo         = new SalesOrderRepository( new Client( 'http://fake', 'token' ) );
+		$repo_factory = static fn (): SalesOrderRepository => $repo;
+		$releases     = new ReleaseService( new Settings(), $store, new PendingLedger( $store ), new ProductWriter(), $repo_factory, $logger );
+
+		( new SalesOrderPusher( $store, $repo_factory, $logger ) )->push( $order->get_id() );
+		( new AllocationPoller( $store, $repo_factory, new Settings(), $releases, $logger ) )->poll();
+
+		$order = wc_get_order( $order->get_id() );
+		$this->assertSame( 'yes', (string) $order->get_meta( Meta::ORDER_RELEASED ), 'the first poll must settle the order' );
+
+		$store->add( $order->get_id(), 0, $product->get_id(), 605, 'line', 'again', 1 );
+		$this->assertCount( 1, $store->all_held(), 'the order holds stock again' );
+
+		( new AllocationPoller( $store, $repo_factory, new Settings(), $releases, $logger ) )->poll();
+
+		$this->assertCount( 0, $store->all_held(), 'the new hold must be released too, despite the released flag' );
+	}
+
 	// test that a reservation left behind by a deleted order cannot stop the rest of the run.
 	public function test_poll_survives_a_reservation_for_a_missing_order(): void {
 		$store = new ReservationStore();

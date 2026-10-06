@@ -67,10 +67,6 @@ final class AllocationPoller {
 			return;
 		}
 
-		if ( 'yes' === (string) $order->get_meta( Meta::ORDER_RELEASED ) ) {
-			return;
-		}
-
 		$sales_order_id = (int) $order->get_meta( Meta::ORDER_SALES_ORDER_ID );
 		if ( $sales_order_id <= 0 ) {
 			return; // Not pushed upstream yet.

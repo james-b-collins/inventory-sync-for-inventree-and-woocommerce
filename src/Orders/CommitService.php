@@ -11,6 +11,7 @@ use InvenTreeSync\Scheduling\Scheduler;
 use InvenTreeSync\Stock\PendingLedger;
 use InvenTreeSync\Stock\ReservationStore;
 use InvenTreeSync\Support\Logger;
+use InvenTreeSync\Support\Meta;
 
 // Exit if accessed directly
 if ( ! defined( 'ABSPATH' ) ) {exit;}
@@ -48,6 +49,7 @@ final class CommitService {
 
 		$part_deltas         = [];
 		$touched_product_ids = [];
+		$holds_added         = false;
 
 		foreach ( $existing as $key => $reservation ) {
 			if ( isset( $desired[ $key ] ) ) {
@@ -73,6 +75,7 @@ final class CommitService {
 				);
 				$this->record_delta( $part_deltas, $line['part_id'], $line['qty'] );
 				$touched_product_ids[ $line['product_id'] ] = true;
+				$holds_added                                = true;
 				continue;
 			}
 
@@ -91,6 +94,13 @@ final class CommitService {
 			);
 			$this->record_delta( $part_deltas, $line['part_id'], $change );
 			$touched_product_ids[ $line['product_id'] ] = true;
+			if ( $change > 0 ) {
+				$holds_added = true;
+			}
+		}
+
+		if ( $holds_added ) {
+			$this->mark_unreleased( $order );
 		}
 
 		if ( empty( $touched_product_ids ) ) {
@@ -110,6 +120,21 @@ final class CommitService {
 		);
 
 		return $part_deltas;
+	}
+
+	// Clear the released flag, because this order is holding stock again.
+	private function mark_unreleased( \WC_Order $order ): void {
+		$fresh_order = wc_get_order( $order->get_id() );
+		if ( ! $fresh_order ) {
+			return;
+		}
+
+		if ( '' === (string) $fresh_order->get_meta( Meta::ORDER_RELEASED ) ) {
+			return;
+		}
+
+		$fresh_order->delete_meta_data( Meta::ORDER_RELEASED );
+		$fresh_order->save();
 	}
 
 	// Return the desired reservations for an order, based on its current line items.
@@ -203,6 +228,10 @@ final class CommitService {
 				$this->pending->recompute( $touched_product_id );
 				$this->writer->materialise( $touched_product_id );
 			}
+		}
+
+		if ( ! empty( $touched_product_ids ) ) {
+			$this->mark_unreleased( $order );
 		}
 
 		// Log the committed order line if any products were touched
