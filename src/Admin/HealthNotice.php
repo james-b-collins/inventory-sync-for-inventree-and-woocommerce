@@ -34,6 +34,14 @@ final class HealthNotice {
 		}
 
 		$problems = [];
+		// Check for broken background jobs
+		if ( $snapshot['schedule']['broken'] ) {
+			$problems[] = sprintf(
+				/* translators: %s: comma separated list of background job names. */
+				__( 'background jobs have stopped and are not scheduled (%s)', 'inventory-sync-for-inventree-and-woocommerce' ),
+				implode( ', ', $snapshot['schedule']['missing_hooks'] )
+			);
+		}
 		if ( $snapshot['sync']['stale'] ) {
 			$problems[] = __( 'the catalogue sync has not run recently (check that a system cron is hitting wp-cron.php)', 'inventory-sync-for-inventree-and-woocommerce' );
 		}

@@ -28,7 +28,14 @@ final class StatusReport {
 		$now        = time();
 		$enabled    = $this->settings->is_enabled();
 		$configured = $this->settings->is_configured();
-		$scheduled  = $this->scheduler->is_scheduled();
+
+		$mirrors_inventory    = $this->settings->mirror_inventory();
+		$creates_sales_orders = $this->settings->create_sales_orders();
+
+		// Check the status of the scheduled actions
+		$missing_hooks   = $this->scheduler->missing_hooks( $mirrors_inventory, $creates_sales_orders );
+		$schedule_broken = ( [] !== $missing_hooks );
+		$scheduled       = ! $schedule_broken;
 
 		$last_sync  = (int) get_option( self::LAST_SYNC_OPTION, 0 );
 		$has_synced = ( $last_sync > 0 );
@@ -46,9 +53,8 @@ final class StatusReport {
 			$staleness_threshold = 15 * MINUTE_IN_SECONDS;
 		}
 
-		// Determine if the sync is stale
 		$sync_stale = false;
-		if ( $scheduled ) {
+		if ( $mirrors_inventory ) {
 			if ( ! $has_synced ) {
 				$sync_stale = true;
 			} elseif ( $sync_age > $staleness_threshold ) {
@@ -65,7 +71,7 @@ final class StatusReport {
 		if ( ! $enabled ) {
 			$healthy = true;
 		} else {
-			$healthy = ( $configured && ! $sync_stale && ! $pending_aging );
+			$healthy = ( $configured && ! $schedule_broken && ! $sync_stale && ! $pending_aging );
 		}
 
 		$last_success_at = null;
@@ -79,6 +85,10 @@ final class StatusReport {
 			'enabled'      => $enabled,
 			'configured'   => $configured,
 			'scheduled'    => $scheduled,
+			'schedule'     => [
+				'broken'        => $schedule_broken,
+				'missing_hooks' => $missing_hooks,
+			],
 			'sync'         => [
 				'last_success_at'        => $last_success_at,
 				'last_success_timestamp' => $has_synced ? $last_sync : null,

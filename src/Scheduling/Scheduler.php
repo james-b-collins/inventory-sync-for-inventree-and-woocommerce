@@ -102,8 +102,12 @@ final class Scheduler {
 		}
 	}
 
-	// returns an array of hook names that are expected to be scheduled but are currently missing.
-	private function missing_hooks( bool $mirror_inventory, bool $create_sales_orders ): array {
+	// Get a list of hooks that are expected to be scheduled but are currently missing.
+	public function missing_hooks( bool $mirror_inventory, bool $create_sales_orders ): array {
+		if ( ! function_exists( 'as_next_scheduled_action' ) ) {
+			return [];
+		}
+
 		$expected = [];
 		if ( $mirror_inventory ) {
 			$expected[] = self::SYNC_START;
@@ -182,14 +186,6 @@ final class Scheduler {
 		if ( function_exists( 'as_unschedule_all_actions' ) ) {
 			as_unschedule_all_actions( $hook, [], self::GROUP );
 		}
-	}
-
-	// Check if the sync start action is scheduled.
-	public function is_scheduled(): bool {
-		if ( ! function_exists( 'as_next_scheduled_action' ) ) {
-			return false;
-		}
-		return false !== as_next_scheduled_action( self::SYNC_START, [], self::GROUP );
 	}
 
 	// Unschedule all actions for the plugin. Called on deactivation.
